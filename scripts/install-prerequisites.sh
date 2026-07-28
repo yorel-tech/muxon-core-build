@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install host prerequisites for the Infron / muxon-build system.
+# Install host prerequisites for the Muxon / muxon-build system.
 # Mirrors muxon-core/dev-docs/build/README.md (Prerequisites) and quick-start.md (First-Time Setup + appliance tools).
 #
 # Usage:
@@ -55,7 +55,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 
-log "muxon-build root: $MUXON_ROOT"
+log "muxon-core-build root: $MUXON_ROOT"
 log "Configuring user: $TARGET_USER (docker/kvm groups)"
 
 apt_update() {
@@ -215,5 +215,5 @@ add_user_groups
 append_buildkit_hint
 
 log "Done."
-log "Next: log out and back in (or newgrp docker; newgrp kvm), then from muxon-build run: ./verify-setup.sh"
-log "Optional: chmod +x ../muxon-core/gradlew ../muxon-nexus/gradlew ../muxon-enterprise/gradlew if verify-setup reports non-executable gradlew."
+log "Next: log out and back in (or newgrp docker; newgrp kvm), then from muxon-core-build run: ./verify-setup.sh"
+log "Optional: chmod +x ../muxon-core/gradlew ../muxon-enterprise/gradlew if verify-setup reports non-executable gradlew."

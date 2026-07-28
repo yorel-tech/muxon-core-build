@@ -3,24 +3,29 @@
 # Usage:
 #   ./scripts/publish-images-to-ghcr.sh [oss|enterprise]
 # Env:
-#   GITHUB_OWNER   - GHCR owner/org (default: from `gh api user -q .login` or `scal`)
+#   GITHUB_OWNER   - GHCR owner/org (default: from `gh api user -q .login` or `yorel`)
 #   VERSION        - image tag (default: main.local)
-#   REGISTRY_NAMESPACE - default scal
+#   REGISTRY_NAMESPACE - default yorel
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VARIANT="${1:-oss}"
+if [[ "$VARIANT" != "oss" ]]; then
+  echo "ERROR: muxon-core-build only publishes OSS images."
+  echo "For enterprise images, use ../muxon-enterprise-build/scripts/publish-images-to-ghcr.sh enterprise"
+  exit 1
+fi
 OWNER="${GITHUB_OWNER:-}"
 if [[ -z "$OWNER" ]]; then
   if command -v gh >/dev/null 2>&1; then
     OWNER="$(gh api user -q .login 2>/dev/null || true)"
   fi
 fi
-OWNER="${OWNER:-scal}"
+OWNER="${OWNER:-yorel}"
 export REGISTRY="${REGISTRY:-ghcr.io/${OWNER}}"
 export VERSION="${VERSION:-main.local}"
 export VARIANT
-export REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-scal}"
+export REGISTRY_NAMESPACE="${REGISTRY_NAMESPACE:-yorel}"
 
 echo "=== Publish images to GHCR ==="
 echo "Registry: $REGISTRY"
@@ -40,12 +45,9 @@ fi
 "$SCRIPT_DIR/build-images.sh"
 "$SCRIPT_DIR/push-images.sh"
 
-SHA_SHORT="$(git -C "$SCRIPT_DIR/../.." rev-parse --short HEAD 2>/dev/null || echo local)"
+SHA_SHORT="$(git -C "$SCRIPT_DIR/.." rev-parse --short HEAD 2>/dev/null || echo local)"
 PREFIX="${REGISTRY}/${REGISTRY_NAMESPACE}"
 SERVICES=(core-services orchestrator console-proxy muxon-initializer web)
-if [[ "$VARIANT" == "enterprise" ]]; then
-  SERVICES+=(api-gateway director net-advanced audit-export)
-fi
 
 echo "Tagging main aliases..."
 for svc in "${SERVICES[@]}"; do
