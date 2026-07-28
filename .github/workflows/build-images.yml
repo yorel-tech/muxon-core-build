@@ -1,0 +1,111 @@
+name: Build Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Image variant
+        required: true
+        default: oss
+        type: choice
+        options:
+          - oss
+  schedule:
+    - cron: '0 3 * * 1'
+    - cron: '0 3 * * *'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  gate:
+    name: Read image schedule
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide whether to build
+        id: decide
+        run: |
+          set -euo pipefail
+          if [[ -f .github/ci-config.yaml ]]; then
+            SCHEDULE=$(grep -A5 '^images:' .github/ci-config.yaml | grep 'schedule:' | head -1 | awk '{print $2}' | tr -d '"' | tr -d "'")
+          else
+            SCHEDULE=weekly
+          fi
+          EVENT="${{ github.event_name }}"
+          CRON="${{ github.event.schedule }}"
+          SHOULD=false
+          case "$EVENT" in
+            workflow_dispatch) SHOULD=true ;;
+            push)
+              if [[ "$SCHEDULE" == "on-merge" ]]; then SHOULD=true; fi
+              ;;
+            schedule)
+              if [[ "$SCHEDULE" == "weekly" && "$CRON" == "0 3 * * 1" ]]; then SHOULD=true; fi
+              if [[ "$SCHEDULE" == "daily" && "$CRON" == "0 3 * * *" ]]; then SHOULD=true; fi
+              if [[ "$SCHEDULE" == "daily" && "$CRON" == "0 3 * * 1" ]]; then SHOULD=false; fi
+              ;;
+          esac
+          echo "should_run=$SHOULD" >> "$GITHUB_OUTPUT"
+          echo "version=main.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+  build-push:
+    name: Build and push OSS images
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout muxon-core-build
+        uses: actions/checkout@v4
+        with:
+          path: muxon-core-build
+      - name: Checkout muxon-core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PUBLIC_CORE_REPO || format('{0}/muxon-core', github.repository_owner) }}
+          path: muxon-core
+          token: ${{ secrets.PUBLIC_REPO_READ_TOKEN || github.token }}
+      - name: Checkout muxon-web
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PUBLIC_WEB_REPO || format('{0}/muxon-web', github.repository_owner) }}
+          path: muxon-web
+          token: ${{ secrets.PUBLIC_REPO_READ_TOKEN || github.token }}
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '25'
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: muxon-core/**/*.gradle*
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: muxon-web/package-lock.json
+      - name: Build artifacts
+        run: |
+          set -euo pipefail
+          (cd muxon-core && ./gradlew build -x test -x :integration-tests:test --no-daemon)
+          (cd muxon-web && npm ci && npm run build)
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push images
+        working-directory: muxon-core-build
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ needs.gate.outputs.version }}
+          VARIANT: oss
+        run: |
+          set -euo pipefail
+          ./scripts/build-images.sh
+          ./scripts/push-images.sh

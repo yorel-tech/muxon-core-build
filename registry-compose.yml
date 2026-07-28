@@ -1,0 +1,28 @@
+services:
+  docker-registry:
+    image: registry:2
+    container_name: muxon-docker-registry
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/registry:/var/lib/registry
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    restart: unless-stopped
+
+  chartmuseum:
+    image: ghcr.io/helm/chartmuseum:v0.16.0
+    container_name: muxon-chartmuseum
+    # Bind mounts are often root-owned; ChartMuseum runs as non-root by default
+    # and cannot create charts under /charts without matching ownership.
+    user: "0:0"
+    ports:
+      - "8081:8080"
+    environment:
+      STORAGE: local
+      STORAGE_LOCAL_ROOTDIR: /charts
+      DISABLE_API: "false"
+      ALLOW_OVERWRITE: "true"
+    volumes:
+      - ./data/charts:/charts
+    restart: unless-stopped
