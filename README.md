@@ -56,6 +56,18 @@ Publish to GHCR:
 make publish-ghcr-oss
 ```
 
+## Compose install kit
+
+Package the operator kit (Compose file, templates, `install.sh`, `INSTALL.md`) for a versioned OSS release:
+
+```bash
+VERSION=1.2.3 ./scripts/package-compose-install.sh
+# dist/compose-install/muxon-compose-install-1.2.3.tar.gz
+# dist/compose-install/muxon-compose-install-1.2.3.zip
+```
+
+`.github/workflows/oss-release.yml` builds that archive and attaches it to the GitHub Release next to the Helm chart. The weekly `build-images` workflow does not publish the kit.
+
 ## Useful variables
 
 | Variable | Default | Meaning |
