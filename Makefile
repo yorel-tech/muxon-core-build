@@ -1,4 +1,4 @@
-.PHONY: help build-oss images-oss images-oss-push helm-oss publish-ghcr-oss registry-up registry-down
+.PHONY: help build-oss images-oss images-oss-push helm-oss compose-install publish-ghcr-oss registry-up registry-down
 
 VERSION := $(shell cat VERSION)
 REGISTRY ?= localhost:5000
@@ -14,6 +14,7 @@ help:
 	@echo "  make images-oss         Build OSS Docker images (no push)"
 	@echo "  make images-oss-push    Build + push OSS images to \$$REGISTRY"
 	@echo "  make helm-oss           Package muxon-core Helm chart"
+	@echo "  make compose-install    Package the Compose install kit (tar.gz + zip)"
 	@echo "  make publish-ghcr-oss   Publish OSS images to GHCR"
 	@echo "  make registry-up        Start local registry + ChartMuseum"
 	@echo "  make registry-down      Stop local registries"
@@ -47,6 +48,9 @@ images-oss-push: images-oss
 
 helm-oss: images-oss
 	VARIANT=oss REGISTRY=$(REGISTRY) REGISTRY_NAMESPACE=$(REGISTRY_NAMESPACE) VERSION=$(VERSION) ./scripts/package-helm.sh
+
+compose-install:
+	VERSION=$(VERSION) ./scripts/package-compose-install.sh
 
 publish-ghcr-oss:
 	./scripts/publish-images-to-ghcr.sh oss

@@ -1,0 +1,194 @@
+name: OSS Release
+
+# Versioned OSS release only. Weekly/scheduled image builds stay in build-images.yml
+# and do not publish the Compose install kit.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version without a leading v (for example 1.2.3)
+        required: true
+        type: string
+      publish:
+        description: Push images and create the GitHub Release. Leave false to package assets and print the release command.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  images:
+    name: Build and push release images
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW="${{ inputs.version }}"
+          else
+            RAW="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$RAW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-oss)?$ ]]; then
+            echo "ERROR: version must look like 1.2.3 or 1.2.3-oss (got: $RAW)" >&2
+            exit 1
+          fi
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout muxon-core-build
+        uses: actions/checkout@v4
+        with:
+          path: muxon-core-build
+      - name: Checkout muxon-core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PUBLIC_CORE_REPO || format('{0}/muxon-core', github.repository_owner) }}
+          path: muxon-core
+          token: ${{ secrets.PUBLIC_REPO_READ_TOKEN || github.token }}
+      - name: Checkout muxon-web
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PUBLIC_WEB_REPO || format('{0}/muxon-web', github.repository_owner) }}
+          path: muxon-web
+          token: ${{ secrets.PUBLIC_REPO_READ_TOKEN || github.token }}
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "25"
+          distribution: temurin
+          cache: gradle
+          cache-dependency-path: muxon-core/**/*.gradle*
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: muxon-web/package-lock.json
+      - name: Build artifacts
+        run: |
+          set -euo pipefail
+          (cd muxon-core && ./gradlew build -x test -x :integration-tests:test --no-daemon)
+          (cd muxon-web && npm ci && npm run build)
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push images
+        working-directory: muxon-core-build
+        env:
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          VERSION: ${{ steps.version.outputs.version }}
+          VARIANT: oss
+        run: |
+          set -euo pipefail
+          ./scripts/build-images.sh
+          ./scripts/push-images.sh
+
+  release:
+    name: Package and publish release assets
+    needs: images
+    if: >-
+      always() &&
+      (needs.images.result == 'success' || needs.images.result == 'skipped') &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            RAW="${{ inputs.version }}"
+          else
+            RAW="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ ! "$RAW" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-oss)?$ ]]; then
+            echo "ERROR: version must look like 1.2.3 or 1.2.3-oss (got: $RAW)" >&2
+            exit 1
+          fi
+          echo "version=$RAW" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "push" || "${{ inputs.publish }}" == "true" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout muxon-core-build
+        uses: actions/checkout@v4
+        with:
+          path: muxon-core-build
+      - name: Checkout muxon-core
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PUBLIC_CORE_REPO || format('{0}/muxon-core', github.repository_owner) }}
+          path: muxon-core
+          token: ${{ secrets.PUBLIC_REPO_READ_TOKEN || github.token }}
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Package Helm chart
+        working-directory: muxon-core-build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+          REGISTRY_NAMESPACE: yorel
+          VARIANT: oss
+          HELM_REPO: https://github.com/${{ github.repository_owner }}/muxon-core-build/releases
+        run: ./scripts/package-helm.sh
+
+      - name: Package Compose install kit
+        working-directory: muxon-core-build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/package-compose-install.sh
+
+      - name: Publish GitHub Release
+        working-directory: muxon-core-build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PUBLISH: ${{ steps.version.outputs.publish }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          HELM_TGZ="${GITHUB_WORKSPACE}/dist/helm/muxon-core-${VERSION}.tgz"
+          COMPOSE_TGZ="dist/compose-install/muxon-compose-install-${VERSION}.tar.gz"
+          COMPOSE_ZIP="dist/compose-install/muxon-compose-install-${VERSION}.zip"
+          test -f "$HELM_TGZ"
+          test -f "$COMPOSE_TGZ"
+          test -f "$COMPOSE_ZIP"
+          NOTES_FILE="${RUNNER_TEMP}/muxon-release-notes.md"
+          {
+            echo "Muxon Core ${VERSION}"
+            echo
+            echo "Assets:"
+            echo "- Helm chart: muxon-core-${VERSION}.tgz"
+            echo "- Compose install kit: muxon-compose-install-${VERSION}.tar.gz and .zip"
+            echo
+            echo "Image tag: ghcr.io/${{ github.repository_owner }}/yorel/core-services:${VERSION}"
+            echo
+            echo "Unpack the kit and run ./install.sh, or follow INSTALL.md."
+          } >"$NOTES_FILE"
+          echo "gh release create v${VERSION} ${HELM_TGZ} ${COMPOSE_TGZ} ${COMPOSE_ZIP}"
+          if [[ "$PUBLISH" != "true" ]]; then
+            echo "Dry run: not creating the GitHub Release."
+            exit 0
+          fi
+          gh release create "v${VERSION}" \
+            --title "Muxon Core v${VERSION}" \
+            --notes-file "$NOTES_FILE" \
+            "$HELM_TGZ" \
+            "$COMPOSE_TGZ" \
+            "$COMPOSE_ZIP"
